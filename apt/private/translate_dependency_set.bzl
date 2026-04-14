@@ -54,7 +54,7 @@ _PACKAGES = {packages}
 dpkg_status(
     name = "dpkg_status",
     controls = select({{
-        "//:linux_%s" % arch: ["//%s:control" % package for package in packages]
+        "//:linux_%s" % arch: ["//%s/%s:control" % (package, arch) for package in packages]
         for arch, packages in _PACKAGES.items()
     }}) if _PACKAGES else {{}},
     visibility = ["//visibility:public"],
@@ -63,7 +63,7 @@ dpkg_status(
 filegroup(
     name = "packages",
     srcs = select({{
-        "//:linux_%s" % arch: ["//%s" % package for package in packages]
+        "//:linux_%s" % arch: ["//%s/%s" % (package, arch) for package in packages]
         for arch, packages in _PACKAGES.items()
     }}) if _PACKAGES else {{}},
     visibility = ["//visibility:public"],
@@ -163,7 +163,7 @@ def _translate_dependency_set_impl(rctx):
                     data_targets = '"@%s//:data"' % repo_name,
                     control_targets = '"@%s//:control"' % repo_name,
                     src = '"@%s//:data"' % repo_name,
-                    deps = ["@" + util.sanitize(dep_key) for dep_key in package["depends_on"]],
+                    deps = ["@" + util.sanitize(dep_key) + "//:data" for dep_key in package["depends_on"]],
                     urls = [
                         uri + "/" + package["filename"]
                         for uri in sources[package["suite"]]["uris"]

@@ -1,6 +1,9 @@
+load(":deb_postfix_test.bzl", "deb_postfix_tests")
 load(":resolution_test.bzl", "resolution_tests")
 load(":version_test.bzl", "version_tests")
 
 version_tests()
+
+deb_postfix_tests()
 
 resolution_tests()

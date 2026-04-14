@@ -1,0 +1,10 @@
+# Bazel settings for the standalone examples workspace.
+
+# Examples use MODULE.bazel for deps.
+common --enable_bzlmod
+
+# Keep Java toolchain hermetic so examples don't require a host JDK.
+build --java_runtime_version=remotejdk_11
+
+# Debian snapshot can be flaky; retries make tests more robust.
+common --experimental_repository_downloader_retries=10
