@@ -1,5 +1,6 @@
 load(":deb_postfix_test.bzl", "deb_postfix_tests")
 load(":resolution_test.bzl", "resolution_tests")
+load(":translate_dependency_set_test.bzl", "translate_dependency_set_tests")
 load(":version_test.bzl", "version_tests")
 
 version_tests()
@@ -7,3 +8,5 @@ version_tests()
 deb_postfix_tests()
 
 resolution_tests()
+
+translate_dependency_set_tests()
