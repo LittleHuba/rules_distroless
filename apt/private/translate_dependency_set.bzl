@@ -88,6 +88,8 @@ flatten(
     deduplicate = True,
     visibility = ["//visibility:public"],
 )
+
+{sysroot_target}
 """
 
 _PACKAGE_TEMPLATE = '''\
@@ -146,6 +148,62 @@ def dependency_set_package_selects(packages, dependency_set):
 
     return selects
 
+def _data_tar_label(rctx, repo_name):
+    candidates = [
+        "data.tar.xz",
+        "data.tar.zst",
+        "data.tar.gz",
+        "data.tar.bz2",
+        "data.tar",
+    ]
+    for filename in candidates:
+        label = Label("@@{}//:{}".format(repo_name, filename))
+        if rctx.path(label).exists:
+            return label
+    fail("No data.tar.* archive found in repo @{}".format(repo_name))
+
+def _dependency_set_repo_names(packages, dependency_set):
+    repo_names = {}
+    pending = []
+
+    for entries in dependency_set["sets"].values():
+        for (short_key, version) in entries.items():
+            pending.append(short_key + "=" + version)
+
+    for _ in range(len(packages)):
+        if not pending:
+            break
+
+        current = pending
+        pending = []
+        for package_key in current:
+            if package_key in repo_names:
+                continue
+
+            if package_key not in packages:
+                fail("illegal state: package %s is not in lockfile" % package_key)
+
+            repo_names[package_key] = util.sanitize(package_key)
+            pending.extend(packages[package_key]["depends_on"])
+
+    if pending:
+        fail("dependency traversal for sysroot package repos did not converge")
+
+    return sorted(repo_names.values())
+
+def _sysroot_target_block(sysroot_srcs):
+    if not sysroot_srcs:
+        return ""
+
+    return """filegroup(
+    name = \"sysroot\",
+    srcs = {sysroot_srcs},
+    visibility = [\"//visibility:public\"],
+)
+""".format(
+        sysroot_srcs = starlark_codegen_utils.to_list_attr(sysroot_srcs),
+    )
+
 def _translate_dependency_set_impl(rctx):
     package_template = rctx.read(rctx.attr.package_template)
     lockf = lockfile.from_json(rctx, rctx.attr.lock_content)
@@ -155,7 +213,11 @@ def _translate_dependency_set_impl(rctx):
     dependency_sets = lockf.dependency_sets()
     dependency_set = dependency_sets[rctx.attr.depset_name]
     package_selects = dependency_set_package_selects(packages, dependency_set)
-
+    materialize_sysroot = rctx.attr.unpack_sysroot
+    sysroot_repo_names = _dependency_set_repo_names(packages, dependency_set) if materialize_sysroot else []
+    repo_prefix = ""
+    if "+" in rctx.attr.name:
+        repo_prefix = rctx.attr.name.rsplit("+", 1)[0] + "+"
     packages_to_architectures = {}
 
     for architecture in dependency_set["sets"].keys():
@@ -231,10 +293,54 @@ def _translate_dependency_set_impl(rctx):
             ),
         )
 
+    sysroot_roots = {}
+    if materialize_sysroot:
+        for deb_repo_name in sysroot_repo_names:
+            if repo_prefix and not deb_repo_name.startswith(repo_prefix):
+                deb_repo_name = repo_prefix + deb_repo_name
+
+            data_label = _data_tar_label(rctx, deb_repo_name)
+            listing = rctx.execute([
+                "tar",
+                "--list",
+                "--file",
+                str(rctx.path(data_label)),
+            ])
+            if listing.return_code != 0:
+                fail("Failed listing {} from @{}:\n{}\n{}".format(data_label, deb_repo_name, listing.stdout, listing.stderr))
+
+            for entry in listing.stdout.splitlines():
+                entry = entry.strip()
+                if not entry:
+                    continue
+                if entry.startswith("./"):
+                    entry = entry[2:]
+                entry = entry.strip("/")
+                if not entry:
+                    continue
+
+                root = entry.split("/", 1)[0]
+                if root and root != ".":
+                    sysroot_roots[root] = True
+
+            result = rctx.execute([
+                "tar",
+                "--extract",
+                "--file",
+                str(rctx.path(data_label)),
+                "--directory",
+                ".",
+                "--no-same-owner",
+                "--no-same-permissions",
+            ])
+            if result.return_code != 0:
+                fail("Failed extracting {} from @{}:\n{}\n{}".format(data_label, deb_repo_name, result.stdout, result.stderr))
+
     rctx.file("BUILD.bazel", _ROOT_BUILD_TMPL.format(
         target_name = util.get_repo_name(rctx.attr.name),
         packages = starlark_codegen_utils.to_dict_list_attr(package_selects),
         architectures = starlark_codegen_utils.to_list_attr(dependency_set["sets"].keys()),
+        sysroot_target = _sysroot_target_block(sorted(sysroot_roots.keys())),
     ))
 
 translate_dependency_set = repository_rule(
@@ -242,6 +348,7 @@ translate_dependency_set = repository_rule(
     attrs = {
         "depset_name": attr.string(doc = "INTERNAL: DO NOT USE"),
         "lock_content": attr.string(doc = "INTERNAL: DO NOT USE"),
+        "unpack_sysroot": attr.bool(default = False, doc = "INTERNAL: Whether to materialize an unpacked sysroot tree in the hub repository root."),
         "package_template": attr.label(default = "//apt/private:package.BUILD.tmpl"),
     },
 )

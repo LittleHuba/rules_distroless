@@ -8,6 +8,7 @@ load("//distroless/private:java_keystore.bzl", _java_keystore = "java_keystore")
 load("//distroless/private:locale.bzl", _locale = "locale")
 load("//distroless/private:os_release.bzl", _os_release = "os_release")
 load("//distroless/private:passwd.bzl", _passwd = "passwd")
+load("//distroless/private:sysroot_repo.bzl", _sysroot_repository = "sysroot_repository")
 
 cacerts = _cacerts
 locale = _locale
@@ -17,3 +18,4 @@ passwd = _passwd
 java_keystore = _java_keystore
 home = _home
 flatten = _flatten
+sysroot_repository = _sysroot_repository

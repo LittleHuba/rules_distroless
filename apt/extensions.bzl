@@ -299,9 +299,14 @@ def _distroless_extension(mctx):
 
     resolution_queue = []
     already_resolved = {}
+    dependency_set_unpack_sysroot = {}
 
     for mod in mctx.modules:
         for install in mod.tags.install:
+            if install.dependency_set:
+                current = dependency_set_unpack_sysroot.get(install.dependency_set, False)
+                dependency_set_unpack_sysroot[install.dependency_set] = current or install.unpack_sysroot
+
             for dep_constraint in install.packages:
                 constraint = version_constraint.parse_dep(dep_constraint)
                 architectures = constraint["arch"]
@@ -426,6 +431,7 @@ def _distroless_extension(mctx):
             name = depset_name,
             depset_name = depset_name,
             lock_content = lock_content,
+            unpack_sysroot = dependency_set_unpack_sysroot.get(depset_name, False),
         )
 
     # Generate a repo per package which will be aliased by hub repo.
@@ -587,6 +593,7 @@ install = tag_class(
         "dependency_set": attr.string(),
         "suites": attr.string_list(),
         "include_transitive": attr.bool(default = True),
+        "unpack_sysroot": attr.bool(default = False),
     },
 )
 

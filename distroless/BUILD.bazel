@@ -16,5 +16,6 @@ bzl_library(
         "//distroless/private:locale",
         "//distroless/private:os_release",
         "//distroless/private:passwd",
+        "//distroless/private:sysroot_repo",
     ],
 )

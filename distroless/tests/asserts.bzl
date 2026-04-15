@@ -71,6 +71,45 @@ def assert_tar_listing(name, actual, expected):
         timeout = "short",
     )
 
+def assert_directory_listing(name, actual, expected):
+    """
+    Assert that a directory tree target contains the expected paths.
+
+    Args:
+        name: name of this assertion
+        actual: label for a directory-producing target
+        expected: expected sorted path listing
+    """
+    actual_listing = "_{}_listing".format(name)
+    expected_listing = "_{}_expected".format(name)
+
+    native.genrule(
+        name = actual_listing,
+        srcs = [actual],
+        outs = ["_{}.listing".format(name)],
+        cmd = """
+#!/usr/bin/env bash
+set -o pipefail -o errexit -o nounset
+
+dir="$(location %s)"
+find "$$dir" -mindepth 1 | LC_ALL=C sort | sed "s#^$$dir##" > "$@"
+""" % actual,
+    )
+
+    write_file(
+        name = expected_listing,
+        out = "_{}.expected".format(name),
+        content = [expected],
+        newline = "unix",
+    )
+
+    diff_test(
+        name = name,
+        file1 = actual_listing,
+        file2 = expected_listing,
+        timeout = "short",
+    )
+
 # buildifier: disable=function-docstring
 def assert_jks_listing(name, actual, expected):
     actual_listing = "_{}_listing".format(name)
