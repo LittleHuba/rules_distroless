@@ -148,20 +148,6 @@ def dependency_set_package_selects(packages, dependency_set):
 
     return selects
 
-def _data_tar_label(rctx, repo_name):
-    candidates = [
-        "data.tar.xz",
-        "data.tar.zst",
-        "data.tar.gz",
-        "data.tar.bz2",
-        "data.tar",
-    ]
-    for filename in candidates:
-        label = Label("@@{}//:{}".format(repo_name, filename))
-        if rctx.path(label).exists:
-            return label
-    fail("No data.tar.* archive found in repo @{}".format(repo_name))
-
 def _dependency_set_repo_names(packages, dependency_set):
     repo_names = {}
     pending = []
@@ -299,7 +285,7 @@ def _translate_dependency_set_impl(rctx):
             if repo_prefix and not deb_repo_name.startswith(repo_prefix):
                 deb_repo_name = repo_prefix + deb_repo_name
 
-            data_label = _data_tar_label(rctx, deb_repo_name)
+            data_label = Label("@@{}//:data".format(deb_repo_name))
             listing = rctx.execute([
                 "tar",
                 "--list",
