@@ -110,10 +110,79 @@ assert_tar_listing(
     name = "test_flatten_dedup_listing",
     actual = "flatten_dedup",
     expected = """\
-flatten/
-flatten/dir/
-flatten/dir/changelog
-flatten/dir/sub/
-flatten/dir/sub/content.txt
+./flatten/
+./flatten/dir/
+./flatten/dir/changelog
+./flatten/dir/sub/
+./flatten/dir/sub/content.txt
+""",
+)
+
+# Flatten with deduplication across mixed path formats ("./top/" vs "top/").
+tar(
+    name = "dotslash_tar",
+    compress = "gzip",
+    mtree = [
+        "./top/ type=dir uid=0 gid=0 mode=0755 time=0.0",
+        "./top/sub/ type=dir uid=0 gid=0 mode=0755 time=0.0",
+    ],
+)
+
+tar(
+    name = "nodotslash_tar",
+    compress = "gzip",
+    mtree = [
+        "top/ type=dir uid=0 gid=0 mode=0755 time=0.0",
+        "top/sub/ type=dir uid=0 gid=0 mode=0755 time=0.0",
+    ],
+)
+
+genrule(
+    name = "absolute_tar_gen",
+    outs = ["absolute_tar.tar.gz"],
+    cmd = """
+mkdir -p top
+$(BSDTAR_BIN) -czf $@ -P -s ',^top,/top,' top/
+""",
+    toolchains = ["@bsd_tar_toolchains//:resolved_toolchain"],
+)
+
+flatten(
+    name = "flatten_dedup_normalize",
+    deduplicate = True,
+    tars = [
+        ":nodotslash_tar",
+        ":dotslash_tar",
+        ":absolute_tar_gen",
+    ],
+)
+
+assert_tar_listing(
+    name = "test_flatten_dedup_normalize",
+    actual = "flatten_dedup_normalize",
+    expected = """\
+./top/
+./top/sub/
+/top/
+""",
+)
+
+flatten(
+    name = "flatten_dedup_normalize_reversed",
+    deduplicate = True,
+    tars = [
+        ":absolute_tar_gen",
+        ":dotslash_tar",
+        ":nodotslash_tar",
+    ],
+)
+
+assert_tar_listing(
+    name = "test_flatten_dedup_normalize_reversed",
+    actual = "flatten_dedup_normalize_reversed",
+    expected = """\
+/top/
+./top/
+./top/sub/
 """,
 )
