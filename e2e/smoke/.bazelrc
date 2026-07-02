@@ -1,0 +1,11 @@
+# Bazel settings for the standalone examples workspace.
+
+# Keep Java toolchain hermetic so examples don't require a host JDK.
+build --java_runtime_version=remotejdk_11
+
+# Debian snapshot can be flaky; retries make tests more robust.
+common --experimental_repository_downloader_retries=10
+common --experimental_scale_timeouts=2.0
+common --http_connector_attempts=10
+common --http_connector_retry_max_timeout=1s
+common --http_timeout_scaling=2.0
