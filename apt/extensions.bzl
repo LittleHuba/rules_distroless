@@ -100,27 +100,41 @@ def _start_downloads(mctx, urls, dist, comp, arch, integrity, index_type, cached
 def _resolve_downloads(mctx, tokens, index_type, dist, comp, arch):
     """Wait on tokens in priority order, decompress the first success.
 
-    Returns (output_path, url, integrity, ext) on success.
-    Returns None for optional Contents when all attempts fail.
+    Returns struct(success = True, output, url, integrity, ext) on success.
+    Returns struct(success = False, unavailable = True) for optional Contents when all attempts fail.
+    Returns struct(success = False, error = <message>) for required Packages when all attempts fail.
     """
     failed_attempts = []
+    winner = None
     for (ext, cmd, url, url_idx, ext_name, output, token) in tokens:
         download = token.wait()
         decompress_r = None
-        if download.success:
+        if winner == None and download.success:
             decompress_r = mctx.execute(cmd + [output])
             if decompress_r.return_code == 0:
                 target_triple = "{}/{}/{}".format(dist, comp, arch)
 
                 # Decompressed file lives in its own ext_name subdirectory
-                return ("{}/{}/{}/{}".format(target_triple, url_idx, ext_name, index_type), url, download.integrity, ext)
-        failed_attempts.append((url + "/.../" + index_type + ext, download, decompress_r))
+                winner = struct(
+                    success = True,
+                    output = "{}/{}/{}/{}".format(target_triple, url_idx, ext_name, index_type),
+                    url = url,
+                    integrity = download.integrity,
+                    ext = ext,
+                )
+                continue
+
+        if winner == None:
+            failed_attempts.append((url + "/.../" + index_type + ext, download, decompress_r))
+
+    if winner != None:
+        return winner
 
     if index_type == "Contents":
         # Contents files are optional; some repositories (e.g. packages.cloud.google.com/apt)
-        # don't provide them. Print a warning and return None instead of failing.
+        # don't provide them. Print a warning and mark Contents as unavailable.
         print("Warning: Could not fetch Contents index for {}/{}/{}. Contents files are optional.".format(dist, comp, arch))
-        return None
+        return struct(success = False, unavailable = True)
 
     # For Packages, fail with details
     attempt_messages = []
@@ -132,14 +146,21 @@ def _resolve_downloads(mctx, tokens, index_type, dist, comp, arch):
             reason = "Decompression failed with non-zero exit code.\n\n{}\n{}".format(decompress.stderr, decompress.stdout)
         attempt_messages.append("""\n*) Failed '{}'\n\n{}""".format(failed_url, reason))
 
-    fail("""
+    return struct(
+        success = False,
+        error = """
 ** Tried to download {} different package indices and all failed.
 
 {}
-        """.format(len(failed_attempts), "\n".join(attempt_messages)))
+        """.format(len(failed_attempts), "\n".join(attempt_messages)),
+    )
 
 def _fetch_and_parse_sources(mctx, repo, glock, snapshot_suites, formats):
-    """Fetch all package indices and contents in parallel, then parse them."""
+    """Fetch all package indices and contents in parallel, then parse them.
+
+    Important: all download tokens are always awaited before parsing or failing,
+    so Bazel does not report pending asynchronous work on early exits.
+    """
     pending = []
     seen = {}
     for source_key, source in repo.sources().items():
@@ -204,31 +225,49 @@ def _fetch_and_parse_sources(mctx, repo, glock, snapshot_suites, formats):
             cnt_fact_key,
         ))
 
-    # Pass 2: Wait, decompress, parse
+    # Pass 2: Wait and decompress everything first. This drains every async token
+    # even if a later parse/fail path aborts extension execution.
+    resolved = []
     for (urls, dist, comp, arch, pkg_tokens, cnt_tokens, pkg_fk, cnt_fk) in pending:
         mctx.report_progress("resolving Package indices: {}/{} for {}".format(dist, comp, arch))
-        (output, url, integrity, ext) = _resolve_downloads(mctx, pkg_tokens, "Packages", dist, comp, arch)
-        if dist in snapshot_suites:
-            glock.facts()[pkg_fk] = integrity
-        formats[pkg_fk] = ext
-
-        mctx.report_progress("parsing Package indices: {}/{} for {}".format(dist, comp, arch))
-        repo.parse_package_index(mctx.read(output), urls, dist)
+        pkg_result = _resolve_downloads(mctx, pkg_tokens, "Packages", dist, comp, arch)
 
         if cnt_tokens != None:
             mctx.report_progress("resolving Contents: {}/{} for {}".format(dist, comp, arch))
-            contents_result = _resolve_downloads(mctx, cnt_tokens, "Contents", dist, comp, arch)
+            cnt_result = _resolve_downloads(mctx, cnt_tokens, "Contents", dist, comp, arch)
         else:
-            contents_result = None
+            cnt_result = None
 
-        if contents_result != None:
-            (output, url, integrity, ext) = contents_result
+        resolved.append((
+            urls,
+            dist,
+            comp,
+            arch,
+            pkg_result,
+            cnt_result,
+            pkg_fk,
+            cnt_fk,
+        ))
+
+    # Pass 3: Parse results after all asynchronous work has been fully drained.
+    for (urls, dist, comp, arch, pkg_result, cnt_result, pkg_fk, cnt_fk) in resolved:
+        if not pkg_result.success:
+            fail(pkg_result.error)
+
+        if dist in snapshot_suites:
+            glock.facts()[pkg_fk] = pkg_result.integrity
+        formats[pkg_fk] = pkg_result.ext
+
+        mctx.report_progress("parsing Package indices: {}/{} for {}".format(dist, comp, arch))
+        repo.parse_package_index(mctx.read(pkg_result.output), urls, dist)
+
+        if cnt_result != None and cnt_result.success:
             if dist in snapshot_suites:
-                glock.facts()[cnt_fk] = integrity
-            formats[cnt_fk] = ext
+                glock.facts()[cnt_fk] = cnt_result.integrity
+            formats[cnt_fk] = cnt_result.ext
 
             mctx.report_progress("parsing Contents: {}/{} for {}".format(dist, comp, arch))
-            repo.parse_contents(mctx.read(output), arch)
+            repo.parse_contents(mctx.read(cnt_result.output), arch)
         else:
             formats[cnt_fk] = "unavailable"
 
